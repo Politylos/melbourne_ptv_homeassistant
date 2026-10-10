@@ -1,0 +1,10 @@
+refresh:
+  name: Refresh
+  description: Re-plan routes now and publish them to MQTT.
+  fields:
+    route:
+      name: Route
+      description: Route slug (e.g. work). Leave empty to refresh all routes.
+      example: work
+      selector:
+        text:

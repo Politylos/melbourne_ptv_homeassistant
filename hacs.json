@@ -1,0 +1,6 @@
+{
+  "name": "PTV Transport",
+  "homeassistant": "2024.6.0",
+  "country": ["AU"],
+  "render_readme": true
+}

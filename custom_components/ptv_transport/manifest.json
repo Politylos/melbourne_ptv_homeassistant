@@ -1,0 +1,12 @@
+{
+  "domain": "ptv_transport",
+  "name": "PTV Transport",
+  "codeowners": ["@Politylos"],
+  "dependencies": ["mqtt"],
+  "documentation": "https://github.com/Politylos/melbourne_ptv_homeassistant",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/Politylos/melbourne_ptv_homeassistant/issues",
+  "loggers": ["custom_components.ptv_transport"],
+  "requirements": [],
+  "version": "1.0.0"
+}
