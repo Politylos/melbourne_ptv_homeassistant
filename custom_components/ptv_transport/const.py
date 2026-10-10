@@ -32,3 +32,14 @@ RUNS_TRIED = 3          # runs checked per pair (one pattern call each)
 STOP_CACHE_SECONDS = 24 * 3600
 
 SERVICE_REFRESH = "refresh"
+
+# Config entry / UI
+CONF_SCAN_SECONDS = "scan_interval"     # options: seconds between refreshes
+SUBENTRY_ROUTE = "route"
+CONF_FROM_ENTITY = "from_entity"        # route form fields
+CONF_FROM_LOCATION = "from_location"
+CONF_TO_ENTITY = "to_entity"
+CONF_TO_LOCATION = "to_location"
+CONF_TO_NAME = "to_name"
+SECTION_WALKING = "walking"
+SECTION_ADVANCED = "advanced"

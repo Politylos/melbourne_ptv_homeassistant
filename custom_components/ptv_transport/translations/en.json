@@ -1,0 +1,173 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "PTV Timetable API",
+        "description": "Enter the user ID (devid) and API key that PTV sent you. Routes are added afterwards from the integration page.",
+        "data": {
+          "devid": "User ID (devid)",
+          "api_key": "API key"
+        }
+      },
+      "reconfigure": {
+        "title": "Update PTV credentials",
+        "data": {
+          "devid": "User ID (devid)",
+          "api_key": "API key"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "PTV rejected the user ID or API key.",
+      "cannot_connect": "Could not reach the PTV Timetable API."
+    },
+    "abort": {
+      "already_configured": "This PTV user ID is already set up.",
+      "reconfigure_successful": "Credentials updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "PTV Transport settings",
+        "data": {
+          "topic_prefix": "MQTT topic prefix",
+          "scan_interval": "Refresh every"
+        },
+        "data_description": {
+          "topic_prefix": "Each route is published under this prefix, e.g. transport/work for a route named work.",
+          "scan_interval": "Each refresh makes roughly 10-25 API calls per route."
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "route": {
+      "initiate_flow": {
+        "user": "Add route",
+        "reconfigure": "Edit route"
+      },
+      "entry_type": "Route",
+      "step": {
+        "user": {
+          "title": "Add a route",
+          "description": "Pick where you start and where you want to go. To follow a person or phone (live GPS), choose an entity; otherwise the map point is used.",
+          "data": {
+            "name": "Route name",
+            "from_entity": "Start: follow an entity (optional)",
+            "from_location": "Start: map point",
+            "to_entity": "Destination: follow an entity (optional)",
+            "to_location": "Destination: map point",
+            "to_name": "Destination name",
+            "modes": "Transport modes"
+          },
+          "data_description": {
+            "name": "Also used for the MQTT topic, e.g. \"work\" -> transport/work.",
+            "from_entity": "A person, device tracker or zone. Overrides the map point.",
+            "to_entity": "A person, device tracker or zone. Overrides the map point.",
+            "to_name": "Shown on displays, e.g. Surrey Hills."
+          },
+          "sections": {
+            "walking": {
+              "name": "Walking distances",
+              "description": "How far you're willing to walk to a stop of each mode.",
+              "data": {
+                "train": "Train",
+                "tram": "Tram",
+                "bus": "Bus",
+                "vline": "V/Line",
+                "night_bus": "Night bus"
+              }
+            },
+            "advanced": {
+              "name": "Advanced",
+              "data": {
+                "only_relevant_stops": "Only list stops between boarding and getting off",
+                "max_journeys": "Journeys to keep",
+                "stops_per_mode": "Nearby stops to check per mode"
+              }
+            }
+          }
+        },
+        "reconfigure": {
+          "title": "Edit route",
+          "description": "Pick where you start and where you want to go. To follow a person or phone (live GPS), choose an entity; otherwise the map point is used.",
+          "data": {
+            "name": "Route name",
+            "from_entity": "Start: follow an entity (optional)",
+            "from_location": "Start: map point",
+            "to_entity": "Destination: follow an entity (optional)",
+            "to_location": "Destination: map point",
+            "to_name": "Destination name",
+            "modes": "Transport modes"
+          },
+          "data_description": {
+            "name": "Also used for the MQTT topic, e.g. \"work\" -> transport/work.",
+            "from_entity": "A person, device tracker or zone. Overrides the map point.",
+            "to_entity": "A person, device tracker or zone. Overrides the map point.",
+            "to_name": "Shown on displays, e.g. Surrey Hills."
+          },
+          "sections": {
+            "walking": {
+              "name": "Walking distances",
+              "description": "How far you're willing to walk to a stop of each mode.",
+              "data": {
+                "train": "Train",
+                "tram": "Tram",
+                "bus": "Bus",
+                "vline": "V/Line",
+                "night_bus": "Night bus"
+              }
+            },
+            "advanced": {
+              "name": "Advanced",
+              "data": {
+                "only_relevant_stops": "Only list stops between boarding and getting off",
+                "max_journeys": "Journeys to keep",
+                "stops_per_mode": "Nearby stops to check per mode"
+              }
+            }
+          }
+        }
+      },
+      "error": {
+        "name_required": "Enter a route name.",
+        "duplicate_name": "Another route already uses this name.",
+        "no_modes": "Choose at least one transport mode."
+      },
+      "abort": {
+        "reconfigure_successful": "Route updated."
+      }
+    }
+  },
+  "selector": {
+    "mode": {
+      "options": {
+        "train": "Train",
+        "tram": "Tram",
+        "bus": "Bus",
+        "vline": "V/Line",
+        "night_bus": "Night bus"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "next_departure": {
+        "name": "Next departure"
+      }
+    }
+  },
+  "services": {
+    "refresh": {
+      "name": "Refresh",
+      "description": "Re-plan routes now and publish them to MQTT.",
+      "fields": {
+        "route": {
+          "name": "Route",
+          "description": "Route slug (e.g. work). Leave empty to refresh all routes."
+        }
+      }
+    }
+  }
+}

@@ -44,65 +44,45 @@ issues on request (see the
 Copy `custom_components/ptv_transport` into your Home Assistant
 `config/custom_components/` folder, then restart Home Assistant.
 
-### Then configure it
+## Set up
 
-1. Add your credentials to `secrets.yaml`:
+1. Go to **Settings → Devices & services → Add integration** and choose
+   **PTV Transport**.
+2. Enter your PTV **user ID (devid)** and **API key**. They're checked against
+   the API before they're saved.
+3. On the PTV Transport integration page, click **Add route** for each trip:
+   - **Route name**: also used for the MQTT topic, so `Work` publishes to
+     `transport/work`.
+   - **Start** and **Destination**: pick a point on the map, or choose an
+     entity to follow instead. A `person.*` or `device_tracker.*` uses your
+     phone's live GPS through the Companion app; a `zone.*` uses the zone.
+   - **Transport modes**: train, tram, bus, V/Line and night bus.
+   - **Walking distances** (collapsed): how far you'll walk to each mode.
+     The defaults are train 1500 m, tram 800 m and bus 600 m.
+   - **Advanced** (collapsed): only list the stops between boarding and
+     getting off, how many journeys to keep (1 to 20), and how many nearby
+     stops to check per mode.
 
-   ```yaml
-   ptv_devid: "your-user-id"
-   ptv_api_key: "your-api-key"
-   ```
+You can add as many routes as you like. To edit or delete a route, use the
+⋮ menu next to it on the integration page.
 
-2. Add the configuration below to `configuration.yaml`.
-3. Restart Home Assistant again.
+**Configure** on the integration page sets the MQTT topic prefix (default
+`transport`) and how often to refresh (default 120 seconds). To change your
+user ID or key, choose **Reconfigure**.
 
-## Configuration
+### Moving from configuration.yaml
 
-```yaml
-ptv_transport:
-  devid: !secret ptv_devid
-  api_key: !secret ptv_api_key
-  topic_prefix: transport        # optional, default "transport"
-  scan_interval: 120             # optional, seconds between refreshes
-  routes:
-    # From your phone's live GPS location (Companion app) to a fixed point
-    - name: work
-      from: person.me
-      to:
-        latitude: -37.8255
-        longitude: 145.0995
-        name: Surrey Hills
-      modes: [train, tram, bus]  # optional, choose from: train, tram, bus, vline, night_bus
-      max_walk:                  # optional, metres (defaults: train 1500, tram 800, bus 600)
-        train: 1500
-        tram: 800
-      only_relevant_stops: true  # optional, list only the stops from boarding to getting off
-      max_journeys: 5            # optional, 1 to 20
-
-    # Fixed start, with a zone as the destination
-    - name: beach
-      from:
-        latitude: -37.8183
-        longitude: 144.9671
-      to: zone.st_kilda
-      modes: [tram]
-```
-
-`from` and `to` can each be:
-
-- an entity with `latitude` and `longitude` attributes, such as `person.*`,
-  `device_tracker.*` or `zone.*`
-- fixed coordinates, written as `latitude` and `longitude`, with an optional `name`
-
-You can add as many routes as you like. Each one is published to
-`<topic_prefix>/<slug of name>`, so `work` goes to `transport/work`.
+Version 1.0 was configured in YAML. If a `ptv_transport:` block is still in
+`configuration.yaml`, it's imported into the setup above the first time 1.1
+starts, with each route becoming a route entry. After that the YAML is
+ignored, and you can delete the block.
 
 ## What gets published
 
 | Topic | Payload |
 |---|---|
 | `transport/routes` | JSON list of the route slugs, e.g. `["work","beach"]` (retained) |
-| `transport/<route>` | The route's journeys, as below (retained, updated every `scan_interval`) |
+| `transport/<route>` | The route's journeys, as below (retained, updated every refresh) |
 
 ```json
 {
@@ -144,9 +124,10 @@ You can add as many routes as you like. Each one is published to
 
 ## Sensor
 
-Each route gets a sensor, `sensor.ptv_<route>`, whose value is the departure
-time of the best journey. Its attributes list every journey (without the
-stop lists) and the route's MQTT topic.
+Each route gets its own device with a sensor,
+`sensor.ptv_<route>_next_departure`, whose value is the departure time of the
+best journey. Its attributes list every journey (without the stop lists) and
+the route's MQTT topic.
 
 ## Refresh now
 
@@ -157,4 +138,16 @@ Call the `ptv_transport.refresh` action to re-plan straight away. Add
 
 Each refresh makes about 10 to 25 API calls per route. Nearby stop lookups are
 cached for a day, so after the first refresh it's mostly departure and
-stopping-pattern calls. With many routes, raise `scan_interval`.
+stopping-pattern calls. With many routes, raise the refresh interval under **Configure**.
+
+## Development
+
+The tests drive the setup screens, route publishing and YAML import inside a
+real Home Assistant:
+
+```bash
+pip install -r requirements_test.txt
+pytest
+```
+
+GitHub Actions runs them, hassfest and HACS validation on every push.

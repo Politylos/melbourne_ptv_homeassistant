@@ -6,33 +6,39 @@ from datetime import datetime
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from . import RouteCoordinator
+from . import PtvConfigEntry, RouteCoordinator
 from .const import DOMAIN
 
 ICONS = {"train": "mdi:train", "tram": "mdi:tram", "bus": "mdi:bus",
          "vline": "mdi:train-variant", "night_bus": "mdi:bus-clock"}
 
 
-async def async_setup_platform(hass: HomeAssistant, config: ConfigType,
-                               async_add_entities: AddEntitiesCallback,
-                               discovery_info: DiscoveryInfoType | None = None) -> None:
-    if discovery_info is None:
-        return
-    async_add_entities(RouteSensor(c) for c in hass.data[DOMAIN].values())
+async def async_setup_entry(hass: HomeAssistant, entry: PtvConfigEntry,
+                            async_add_entities: AddConfigEntryEntitiesCallback) -> None:
+    for subentry_id, coord in entry.runtime_data.coordinators.items():
+        async_add_entities([RouteSensor(coord)], config_subentry_id=subentry_id)
 
 
 class RouteSensor(CoordinatorEntity[RouteCoordinator], SensorEntity):
     _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_has_entity_name = True
+    _attr_translation_key = "next_departure"
 
     def __init__(self, coordinator: RouteCoordinator) -> None:
         super().__init__(coordinator)
-        self._attr_unique_id = f"{DOMAIN}_{coordinator.slug}"
-        self._attr_name = f"PTV {coordinator.route[CONF_NAME]}"
+        self._attr_unique_id = f"{coordinator.subentry_id}_next_departure"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, coordinator.subentry_id)},
+            name=f"PTV {coordinator.route[CONF_NAME]}",
+            manufacturer="Public Transport Victoria",
+            model="Route",
+            entry_type=DeviceEntryType.SERVICE,
+        )
 
     @property
     def _best(self) -> dict | None:

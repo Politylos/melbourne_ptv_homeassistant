@@ -1,22 +1,32 @@
 """PTV Transport: plans Melbourne public transport journeys with the PTV
-Timetable API and publishes each configured route to MQTT as
-<topic_prefix>/<route> (retained JSON), plus a sensor per route.
+Timetable API and publishes each route to MQTT as <topic_prefix>/<route>
+(retained JSON), plus a sensor per route.
+
+Set up from Settings -> Devices & services (one entry per PTV account, one
+"route" sub-entry per route). A `ptv_transport:` block in configuration.yaml
+is imported once into that UI setup.
 """
 from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from datetime import timedelta
 
 import voluptuous as vol
 
 from homeassistant.components import mqtt
-from homeassistant.const import CONF_LATITUDE, CONF_LONGITUDE, CONF_NAME, CONF_SCAN_INTERVAL
-from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
+from homeassistant.const import (
+    CONF_LATITUDE,
+    CONF_LONGITUDE,
+    CONF_NAME,
+    CONF_SCAN_INTERVAL,
+    Platform,
+)
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.discovery import async_load_platform
-from homeassistant.helpers.start import async_at_started
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -32,6 +42,7 @@ from .const import (
     CONF_MODES,
     CONF_ONLY_RELEVANT,
     CONF_ROUTES,
+    CONF_SCAN_SECONDS,
     CONF_STOPS_PER_MODE,
     CONF_TO,
     CONF_TOPIC_PREFIX,
@@ -43,13 +54,14 @@ from .const import (
     DOMAIN,
     MODES,
     SERVICE_REFRESH,
+    SUBENTRY_ROUTE,
 )
 from .planner import StopCache, plan
 
 _LOGGER = logging.getLogger(__name__)
+PLATFORMS = [Platform.SENSOR]
 
-# A place is either an entity with latitude/longitude attributes
-# (person.*, device_tracker.* from your phone's GPS, zone.*) or fixed coords.
+# ---- configuration.yaml (imported once into the UI setup) -----------------
 LOCATION_SCHEMA = vol.Any(
     cv.entity_id,
     vol.Schema({
@@ -74,15 +86,23 @@ ROUTE_SCHEMA = vol.Schema({
 })
 
 CONFIG_SCHEMA = vol.Schema({
-    DOMAIN: vol.Schema({
+    vol.Optional(DOMAIN): vol.Schema({
         vol.Required(CONF_DEVID): cv.string,
         vol.Required(CONF_API_KEY): cv.string,
         vol.Optional(CONF_TOPIC_PREFIX, default=DEFAULT_TOPIC_PREFIX): cv.string,
         vol.Optional(CONF_SCAN_INTERVAL, default=timedelta(seconds=DEFAULT_SCAN_INTERVAL)):
             cv.time_period,
-        vol.Required(CONF_ROUTES): vol.All(cv.ensure_list, [ROUTE_SCHEMA]),
+        vol.Optional(CONF_ROUTES, default=[]): vol.All(cv.ensure_list, [ROUTE_SCHEMA]),
     })
 }, extra=vol.ALLOW_EXTRA)
+
+
+@dataclass
+class PtvRuntimeData:
+    coordinators: dict[str, RouteCoordinator]   # subentry_id -> coordinator
+
+
+type PtvConfigEntry = ConfigEntry[PtvRuntimeData]
 
 
 def _resolve(hass: HomeAssistant, spec) -> tuple[float, float, str] | None:
@@ -95,26 +115,26 @@ def _resolve(hass: HomeAssistant, spec) -> tuple[float, float, str] | None:
         if lat is None or lon is None:
             return None
         return float(lat), float(lon), state.name
-    return spec[CONF_LATITUDE], spec[CONF_LONGITUDE], spec.get(CONF_NAME, "")
+    return spec[CONF_LATITUDE], spec[CONF_LONGITUDE], spec.get(CONF_NAME) or ""
 
 
 class RouteCoordinator(DataUpdateCoordinator[dict]):
     """Plans one route and publishes it to MQTT on every refresh."""
 
-    def __init__(self, hass: HomeAssistant, api: PtvApi, cache: StopCache,
-                 route: dict, topic: str, interval: timedelta) -> None:
-        super().__init__(hass, _LOGGER, name=f"{DOMAIN} {route[CONF_NAME]}",
-                         update_interval=interval)
+    def __init__(self, hass: HomeAssistant, entry: PtvConfigEntry, api: PtvApi,
+                 cache: StopCache, subentry_id: str, route: dict, topic: str,
+                 interval: timedelta) -> None:
+        super().__init__(hass, _LOGGER, config_entry=entry,
+                         name=f"{DOMAIN} {route[CONF_NAME]}", update_interval=interval)
         self.api = api
         self.cache = cache
+        self.subentry_id = subentry_id
         self.route = route
         self.slug = slugify(route[CONF_NAME])
         self.topic = topic
         self.modes = [MODES[m] for m in route[CONF_MODES]]
-        self.max_walk = {
-            MODES[m]: route[CONF_MAX_WALK].get(m, DEFAULT_MAX_WALK[m])
-            for m in route[CONF_MODES]
-        }
+        walk = route.get(CONF_MAX_WALK) or {}
+        self.max_walk = {MODES[m]: walk.get(m, DEFAULT_MAX_WALK[m]) for m in route[CONF_MODES]}
 
     async def _async_update_data(self) -> dict:
         origin = _resolve(self.hass, self.route[CONF_FROM])
@@ -125,8 +145,10 @@ class RouteCoordinator(DataUpdateCoordinator[dict]):
         try:
             journeys = await plan(
                 self.api, self.cache, origin[:2], dest[:2], self.modes, self.max_walk,
-                self.route[CONF_STOPS_PER_MODE], self.route[CONF_ONLY_RELEVANT],
-                self.route[CONF_MAX_JOURNEYS], dt_util.get_default_time_zone(),
+                self.route.get(CONF_STOPS_PER_MODE, DEFAULT_STOPS_PER_MODE),
+                self.route.get(CONF_ONLY_RELEVANT, True),
+                self.route.get(CONF_MAX_JOURNEYS, DEFAULT_MAX_JOURNEYS),
+                dt_util.get_default_time_zone(),
             )
         except PtvError as err:
             raise UpdateFailed(str(err)) from err
@@ -154,43 +176,69 @@ class RouteCoordinator(DataUpdateCoordinator[dict]):
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    conf = config[DOMAIN]
-    api = PtvApi(async_get_clientsession(hass), conf[CONF_DEVID], conf[CONF_API_KEY])
-    cache = StopCache()
-    prefix = conf[CONF_TOPIC_PREFIX].rstrip("/")
-
-    coordinators: dict[str, RouteCoordinator] = {}
-    for route in conf[CONF_ROUTES]:
-        slug = slugify(route[CONF_NAME])
-        if slug in coordinators:
-            _LOGGER.error("Duplicate route name %s, skipped", route[CONF_NAME])
-            continue
-        coord = RouteCoordinator(hass, api, cache, route, f"{prefix}/{slug}",
-                                 conf[CONF_SCAN_INTERVAL])
-        coord.async_add_listener(lambda: None)   # keep polling even without sensors
-        coordinators[slug] = coord
-    hass.data[DOMAIN] = coordinators
-
-    async def _first_refresh(_hass: HomeAssistant) -> None:
-        if await mqtt.async_wait_for_mqtt_client(hass):
-            # Index of routes, so a device can discover what's available
-            await mqtt.async_publish(hass, f"{prefix}/routes",
-                                     json.dumps(list(coordinators)), qos=0, retain=True)
-        for coord in coordinators.values():
-            await coord.async_refresh()
-
-    async_at_started(hass, _first_refresh)
+    if DOMAIN in config:
+        conf = dict(config[DOMAIN])
+        conf[CONF_SCAN_SECONDS] = int(conf.pop(CONF_SCAN_INTERVAL).total_seconds())
+        hass.async_create_task(hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_IMPORT}, data=conf))
+        _LOGGER.warning(
+            "ptv_transport in configuration.yaml has been imported into the UI "
+            "setup (Settings -> Devices & services). Later YAML edits are ignored; "
+            "you can remove the ptv_transport block."
+        )
 
     async def _refresh(call: ServiceCall) -> None:
         wanted = call.data.get("route")
-        for slug, coord in coordinators.items():
-            if wanted in (None, slug):
-                await coord.async_refresh()
+        for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+            for coord in entry.runtime_data.coordinators.values():
+                if wanted in (None, coord.slug):
+                    await coord.async_refresh()
 
     hass.services.async_register(
         DOMAIN, SERVICE_REFRESH, _refresh,
         schema=vol.Schema({vol.Optional("route"): cv.string}),
     )
-
-    hass.async_create_task(async_load_platform(hass, "sensor", DOMAIN, {}, config))
     return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: PtvConfigEntry) -> bool:
+    api = PtvApi(async_get_clientsession(hass), entry.data[CONF_DEVID],
+                 entry.data[CONF_API_KEY])
+    cache = StopCache()
+    prefix = entry.options.get(CONF_TOPIC_PREFIX, DEFAULT_TOPIC_PREFIX).strip("/")
+    interval = timedelta(seconds=entry.options.get(CONF_SCAN_SECONDS, DEFAULT_SCAN_INTERVAL))
+
+    coordinators: dict[str, RouteCoordinator] = {}
+    for subentry_id, sub in entry.subentries.items():
+        if sub.subentry_type != SUBENTRY_ROUTE:
+            continue
+        route = dict(sub.data)
+        coordinators[subentry_id] = RouteCoordinator(
+            hass, entry, api, cache, subentry_id, route,
+            f"{prefix}/{slugify(route[CONF_NAME])}", interval)
+    entry.runtime_data = PtvRuntimeData(coordinators)
+
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    entry.async_on_unload(entry.add_update_listener(_async_reload))
+
+    async def _first_refresh() -> None:
+        if await mqtt.async_wait_for_mqtt_client(hass):
+            # Index of routes, so a device can discover what's available
+            await mqtt.async_publish(
+                hass, f"{prefix}/routes",
+                json.dumps([c.slug for c in coordinators.values()]), qos=0, retain=True)
+        for coord in coordinators.values():
+            await coord.async_refresh()
+
+    # Don't block startup on the API; sensors fill in when the first plan lands.
+    entry.async_create_background_task(hass, _first_refresh(), f"{DOMAIN} first refresh")
+    return True
+
+
+async def _async_reload(hass: HomeAssistant, entry: PtvConfigEntry) -> None:
+    """Options changed or a route was added, edited or removed."""
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: PtvConfigEntry) -> bool:
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
